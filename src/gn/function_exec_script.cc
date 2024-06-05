@@ -19,6 +19,7 @@
 #include "gn/value.h"
 #include "util/build_config.h"
 #include "util/ticks.h"
+#include <stdio.h>
 
 namespace functions {
 
@@ -136,20 +137,44 @@ Value RunExecScript(Scope* scope,
   if (!CheckExecScriptPermissions(build_settings, function, err))
     return Value();
 
+  auto root_path_utf8 = scope->settings()->build_settings()->root_path_utf8();
+
   // Find the script to run.
   std::string script_source_path = cur_dir.ResolveRelativeAs(
       true, args[0], err,
-      scope->settings()->build_settings()->root_path_utf8());
+      root_path_utf8);
+
   if (err->has_error())
     return Value();
-  base::FilePath script_path =
-      build_settings->GetFullPath(script_source_path, true);
+  
+  base::FilePath script_path = build_settings->GetFullPath(script_source_path, true);
+  
+  printf("script_source_path : %s\n", script_source_path.c_str());
+  printf("script_path : %s\n", FilePathToUTF8(script_path).c_str());
+
+  auto from = std::string("C:");
+  auto to = std::string("/cygdrive/c");
+  size_t pos = 0;
+
+  auto filtered_script_path = FilePathToUTF8(script_path);
+
+  while ((pos = filtered_script_path.find(from, pos)) != std::string::npos) {
+      filtered_script_path.replace(pos, from.length(), to);
+      pos += to.length();
+  }
+
+  printf("filtered_script_path : %s\n", filtered_script_path.c_str());
+
+  script_path = UTF8ToFilePath(filtered_script_path);
+
   if (!build_settings->secondary_source_path().empty() &&
       !base::PathExists(script_path)) {
     // Fall back to secondary source root when the file doesn't exist.
     script_path =
         build_settings->GetFullPathSecondary(script_source_path, true);
   }
+
+  auto script_path_utf8 = FilePathToUTF8(script_path);
 
   ScopedTrace trace(TraceItem::TRACE_SCRIPT_EXECUTE, script_source_path);
   trace.SetToolchain(settings->toolchain_label());
@@ -165,11 +190,13 @@ Value RunExecScript(Scope* scope,
     for (const auto& dep : deps_value.list_value()) {
       if (!dep.VerifyTypeIs(Value::STRING, err))
         return Value();
-      g_scheduler->AddGenDependency(build_settings->GetFullPath(
-          cur_dir.ResolveRelativeAs(
-              true, dep, err,
-              scope->settings()->build_settings()->root_path_utf8()),
-          true));
+      
+      g_scheduler->AddGenDependency(
+        build_settings->GetFullPath(
+          cur_dir.ResolveRelativeAs(true, dep, err, scope->settings()->build_settings()->root_path_utf8()),
+          true
+      ));
+      
       if (err->has_error())
         return Value();
     }
